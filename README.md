@@ -1,2 +1,261 @@
-# cdn-ips-updater
-Simple CDN IPs updater script
+# CDN IP Updater Script
+
+A flexible and robust bash script for automatically updating CDN provider IP address lists (CloudFlare and Gcore) and reloading services that depend on them.
+
+## Features
+
+- 🌐 **Multi-CDN Support**: CloudFlare (IPv4 + IPv6) and Gcore
+- 🔄 **Smart Service Reload**: Automatically reloads services like HAProxy, Fail2ban, Nginx after IP updates
+- 📝 **Comprehensive Logging**: All actions are logged to journald for easy troubleshooting
+- 🎯 **Flexible CLI**: Run full updates or specific CDN providers only
+- ⚙️ **Configurable**: Override default settings via command-line options
+- 🔒 **Error Handling**: Robust error handling with detailed error messages
+- 📦 **Modular Design**: Easy to extend with additional CDN providers or services
+
+## Requirements
+
+- `curl` - for fetching IP lists
+- `jq` (optional, recommended) - for JSON parsing (falls back to grep if not available)
+- `systemctl` - for service management
+- `logger` - for journald logging (usually pre-installed)
+
+## Installation
+
+```bash
+# Download the script
+wget https://raw.githubusercontent.com/MrDabudi/cdn-ips-updater/main/update_cdn_ips.sh
+
+# Make it executable
+chmod +x update_cdn_ips.sh
+
+# Move to a system directory (optional)
+sudo mv update_cdn_ips.sh /opt/scripts/
+```
+
+## Usage
+
+### Basic Syntax
+
+```bash
+./update_cdn_ips.sh [COMMAND] [OPTIONS]
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `all` | Update all CDN IPs and reload services (default) |
+| `cloudflare` | Update only CloudFlare IPs |
+| `gcore` | Update only Gcore IPs |
+| `reload` | Reload services only (no IP updates) |
+| `help` | Show help message |
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dir=PATH` | Set target directory | `/opt/cdn-ips/cdn_ips` |
+| `--services=LIST` | Set service list (comma-separated) | `haproxy,fail2ban` |
+| `--cf-file=NAME` | Set CloudFlare filename | `cloudflare_ips.lst` |
+| `--gcore-file=NAME` | Set Gcore filename | `gcore_ips.lst` |
+
+## Examples
+
+### Basic Usage
+
+```bash
+# Update everything with defaults
+./update_cdn_ips.sh
+
+# Same as above (explicit)
+./update_cdn_ips.sh all
+
+# Show help
+./update_cdn_ips.sh help
+```
+
+### Selective Updates
+
+```bash
+# Update only CloudFlare IPs
+./update_cdn_ips.sh cloudflare
+
+# Update only Gcore IPs
+./update_cdn_ips.sh gcore
+
+# Only reload services (no IP updates)
+./update_cdn_ips.sh reload
+```
+
+### Custom Configuration
+
+```bash
+# Update CloudFlare with custom directory
+./update_cdn_ips.sh cloudflare --dir=/custom/path
+
+# Update all with different services
+./update_cdn_ips.sh all --services=nginx,haproxy,apache2
+
+# Update Gcore with custom filename
+./update_cdn_ips.sh gcore --gcore-file=custom_gcore.lst
+
+# Multiple options combined
+./update_cdn_ips.sh cloudflare --dir=/tmp/cdn --cf-file=cf_ips.txt --services=nginx
+```
+
+### Advanced Examples
+
+```bash
+# Update CloudFlare and reload only nginx
+./update_cdn_ips.sh cloudflare --services=nginx
+
+# Update Gcore without reloading any services
+./update_cdn_ips.sh gcore --services=""
+
+# Update all CDN IPs but reload only fail2ban
+./update_cdn_ips.sh all --services=fail2ban
+```
+
+## Automation with Cron
+
+Add to your crontab for automatic updates:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Examples:
+
+# Update everything daily at 3 AM
+0 3 * * * /opt/scripts/update_cdn_ips.sh all
+
+# Update CloudFlare every 6 hours
+0 */6 * * * /opt/scripts/update_cdn_ips.sh cloudflare
+
+# Update Gcore every 12 hours
+0 */12 * * * /opt/scripts/update_cdn_ips.sh gcore
+
+# Reload services every hour (without updating IPs)
+0 * * * * /opt/scripts/update_cdn_ips.sh reload
+```
+
+## Logging
+
+All script activities are logged to journald with the tag `cdn-ips-updater`.
+
+### View Logs
+
+```bash
+# Real-time log monitoring
+journalctl -t cdn-ips-updater -f
+
+# View logs from the last hour
+journalctl -t cdn-ips-updater --since "1 hour ago"
+
+# View logs from today
+journalctl -t cdn-ips-updater --since today
+
+# View last 50 log entries
+journalctl -t cdn-ips-updater -n 50
+```
+
+## Output Files
+
+The script creates the following files in the target directory:
+
+- `cloudflare_ips.lst` - CloudFlare IPv4 and IPv6 ranges (one per line)
+- `gcore_ips.lst` - Gcore IPv4 and IPv6 ranges (one per line)
+
+File format example:
+```
+173.245.48.0/20
+103.21.244.0/22
+2606:4700::/32
+```
+
+## Integration Examples
+
+### HAProxy Configuration
+
+```haproxy
+# Use CloudFlare IPs for ACL
+acl from_cloudflare src -f /opt/cdn-ips/cloudflare_ips.lst
+http-request set-header X-Forwarded-For %[src] if from_cloudflare
+```
+
+### Fail2ban Configuration
+
+```ini
+[cloudflare-whitelist]
+enabled = true
+filter = cloudflare
+action = iptables-allports[name=cloudflare]
+logpath = /var/log/nginx/access.log
+ignoreip = file:/opt/cdn-ips/cloudflare_ips.lst
+```
+
+### Nginx Configuration
+
+```nginx
+# Set real IP from CloudFlare
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+# ... include file generated by script
+include /opt/cdn-ips/cloudflare_ips.lst;
+real_ip_header CF-Connecting-IP;
+```
+
+## Troubleshooting
+
+### Script fails to download IPs
+
+Check your internet connection and firewall rules:
+```bash
+# Test CloudFlare connectivity
+curl -I https://www.cloudflare.com/ips-v4
+
+# Test Gcore connectivity
+curl -I https://api.gcore.com/cdn/public-ip-list
+```
+
+### Service reload fails
+
+Check service status:
+```bash
+systemctl status haproxy
+systemctl status fail2ban
+```
+
+### Permission issues
+
+Ensure the script has write permissions to the target directory:
+```bash
+sudo mkdir -p /opt/cdn-ips/cdn_ips
+sudo chmod 755 /opt/cdn-ips/cdn_ips
+```
+
+## Contributing
+
+Contributions are welcome! Feel free to:
+
+- Report bugs
+- Suggest new features
+- Submit pull requests
+- Add support for additional CDN providers
+
+## Related Projects
+
+- [CloudFlare IP Ranges](https://www.cloudflare.com/ips/)
+- [Gcore CDN Documentation](https://gcore.com/docs/cdn)
+
+## Support
+
+If you encounter any issues or have questions:
+
+1. Check the [logs](#logging)
+2. Review the [troubleshooting](#troubleshooting) section
+3. Open an issue on GitHub
+
+---
+
+⭐ If you find this script useful, please consider giving it a star on GitHub!
